@@ -72,3 +72,58 @@ The kasten-cron-logs.yaml will create
 kubectl create job -n $NAMESPACE kasten-cron-logs-manual --from=cronjob/kasten-cron-logs
 ```
 
+# Retrieve the logs 
+
+Once the job is finished you need to create a pod that will attach to the PVC so you can list and copy the tar files locally.
+
+Create a debug pod with the PVC mounted:
+```
+cat<<EOF | kubectl create -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-pod
+  namespace: $NAMESPACE
+spec:
+  containers:
+  - name: debug
+    image: bitnami/kubectl:latest
+    command: ["sleep", "infinity"]
+    volumeMounts:
+    - name: kasten-logs
+      mountPath: /kasten-logs
+  volumes:
+  - name: kasten-logs
+    persistentVolumeClaim:
+      claimName: kasten-logs
+EOF
+
+kubectl wait -n $NAMESPACE --for=condition=ready pod/debug-pod --timeout=60s
+```
+
+List the collected log files:
+```
+kubectl exec -n $NAMESPACE debug-pod -- ls -lh /kasten-logs
+```
+
+Copy a specific log file to your local machine:
+```
+kubectl cp $NAMESPACE/debug-pod:/kasten-logs/2026-02-09-15-43-k10_debug_logs.tar.gz ./2026-02-09-15-43-k10_debug_logs.tar.gz
+```
+
+Or copy all log files:
+```
+for file in $(kubectl exec -n $NAMESPACE debug-pod -- sh -c 'ls /kasten-logs/*.tar.gz 2>/dev/null'); do
+  filename=$(basename $file)
+  kubectl cp $NAMESPACE/debug-pod:/kasten-logs/$filename ./$filename
+done
+```
+
+Delete the debug pod when done:
+```
+kubectl delete pod -n $NAMESPACE debug-pod
+```
+
+
+
+
