@@ -1,0 +1,113 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kasten-cron-logs
+  namespace: kasten-cron-logs
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kasten-cron-logs-cluster-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: kasten-cron-logs
+  namespace: kasten-cron-logs
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: kasten-cron-logs
+  namespace: kasten-cron-logs
+spec:
+  schedule: "0 */3 * * *"  # Every 3 hours
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 1800  # 30 minutes timeout
+      template:
+        spec:
+          serviceAccountName: kasten-cron-logs
+          restartPolicy: OnFailure
+          securityContext:
+            fsGroup: 1001
+          containers:
+          - name: kasten-log-capture
+            image: bitnami/kubectl:latest
+            command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              
+              LOGS_DIR="/kasten-logs"
+              SCRIPT_DIR="/scripts"
+              
+              echo "Starting Kasten log collection at $(date)"
+              
+              # Check disk usage and delete oldest file if above 90%
+              USAGE=$(df -h $LOGS_DIR | awk 'NR==2 {print $5}' | sed 's/%//')
+              echo "Current disk usage: ${USAGE}%"
+              
+              if [ "$USAGE" -ge 90 ]; then
+                echo "Disk usage is at ${USAGE}%, removing oldest tar file..."
+                OLDEST_FILE=$(ls -t $LOGS_DIR/*.tar.gz 2>/dev/null | tail -1)
+                if [ -n "$OLDEST_FILE" ]; then
+                  echo "Deleting: $OLDEST_FILE"
+                  rm -f "$OLDEST_FILE"
+                else
+                  echo "No tar files found to delete"
+                fi
+              fi
+              
+              # Create a temporary working directory inside the PVC
+              WORK_DIR="$LOGS_DIR/tmp-$(date +%s)"
+              mkdir -p $WORK_DIR
+              cd $WORK_DIR
+              
+              # Copy and execute the debug script
+              cp $SCRIPT_DIR/k10_debug.sh .
+              chmod +x k10_debug.sh
+              
+              echo "Running k10_debug.sh..."
+              ./k10_debug.sh
+              
+              # Generate timestamp and rename the file
+              TIMESTAMP=$(date +"%Y-%m-%d-%H-%M")
+              OUTPUT_FILE="${TIMESTAMP}-k10_debug_logs.tar.gz"
+              
+              if [ -f "k10_debug_logs.tar.gz" ]; then
+                echo "Moving log file to ${LOGS_DIR}/${OUTPUT_FILE}"
+                mv k10_debug_logs.tar.gz "${LOGS_DIR}/${OUTPUT_FILE}"
+                echo "Log collection completed successfully"
+                echo "File: ${OUTPUT_FILE}"
+                echo "Size: $(du -h ${LOGS_DIR}/${OUTPUT_FILE} | cut -f1)"
+              else
+                echo "ERROR: k10_debug_logs.tar.gz not found!"
+                exit 1
+              fi
+              
+              # Cleanup
+              cd /
+              rm -rf $WORK_DIR
+              
+              echo "Done at $(date)"
+            volumeMounts:
+            - name: kasten-logs
+              mountPath: /kasten-logs
+            - name: k10-debug-script
+              mountPath: /scripts
+          volumes:
+          - name: kasten-logs
+            persistentVolumeClaim:
+              claimName: kasten-logs
+          - name: k10-debug-script
+            configMap:
+              name: k10-debug-sh
+              defaultMode: 0755
