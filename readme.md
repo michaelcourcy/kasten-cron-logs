@@ -6,7 +6,8 @@ Create a cron job that capture the kasten log every 3 hours, and store them with
 
 With a cluster admin role you can capture the kasten logs using this command 
 ```
-./k10_debug.sh
+VERSION=8.5.1
+curl -s https://docs.kasten.io/downloads/$VERSION/tools/k10_debug.sh | bash;
 ```
 
 By default, the debug script will generate a compressed archive file k10_debug_logs.tar.gz which will have separate logs files for Veeam Kasten services.
