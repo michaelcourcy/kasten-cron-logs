@@ -1,6 +1,6 @@
 # Goal 
 
-Create a cron job that capture the kasten log every 3 hours, and store them with a timestamp
+Create a kubernetes cron job that capture the kasten log every 3 hours, and store them with a timestamp
 
 # Detailed implementation 
 
